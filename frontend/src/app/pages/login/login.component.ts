@@ -114,7 +114,7 @@ export default class LoginComponent {
       next: (res) => {
         this.token.setToken(res.token);
         this.token.setUser(res.user);
-        this.router.navigate(['/todos']);
+        this.router.navigate(['/app/todos']);
       },
       error: (err) => {
         if (err?.status === 401) {

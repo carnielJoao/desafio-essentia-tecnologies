@@ -6,10 +6,10 @@ import { CommonModule } from '@angular/common';
   standalone: true,
   imports: [CommonModule],
   template: `
-    <div class="wrap">
-      <h2>TODOs</h2>
+    <div class="max-w-5xl mx-auto">
+      <h1 class="text-2xl font-bold text-gray-900">Todos</h1>
+      <p class="text-gray-600 mt-2">Lista de tarefas (placeholder — vamos ligar à API depois).</p>
     </div>
   `,
-  styles: [`.wrap{max-width:800px;margin:40px auto;padding:12px}`]
 })
 export default class TodosComponent {}
