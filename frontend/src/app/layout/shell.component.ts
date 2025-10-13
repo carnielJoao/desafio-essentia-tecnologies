@@ -1,6 +1,8 @@
-import { Component, effect, signal } from '@angular/core';
+import { Component, effect, signal, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { RouterOutlet, RouterLink, RouterLinkActive } from '@angular/router';
+import { Router, RouterOutlet, RouterLink, RouterLinkActive } from '@angular/router';
+import { ToastrService } from 'ngx-toastr';
+import { TokenStorageService } from '../services/token-storage.service';
 
 @Component({
   selector: 'app-shell',
@@ -10,7 +12,7 @@ import { RouterOutlet, RouterLink, RouterLinkActive } from '@angular/router';
   <div class="min-h-screen flex bg-gray-50">
     <!-- Sidebar -->
     <aside
-      class="bg-white border-r border-gray-200 transition-[width] duration-200 ease-in-out"
+      class="h-screen bg-white border-r border-gray-200 transition-[width] duration-200 ease-in-out flex flex-col"
       [class.w-64]="open()"
       [class.w-16]="!open()"
     >
@@ -38,7 +40,7 @@ import { RouterOutlet, RouterLink, RouterLinkActive } from '@angular/router';
       </div>
 
       <!-- Links -->
-      <nav class="p-2 space-y-1">
+      <nav class="p-2 space-y-1 overflow-y-auto">
         <!-- TODOS -->
         <a
           routerLink="/app/todos"
@@ -75,6 +77,25 @@ import { RouterOutlet, RouterLink, RouterLinkActive } from '@angular/router';
           </span>
         </a>
       </nav>
+
+      <!-- Rodapé: Sair -->
+      <div class="mt-auto p-2 border-t">
+        <button
+          type="button"
+          (click)="logout()"
+          class="w-full flex items-center gap-3 px-3 h-10 rounded-lg text-red-700 hover:bg-red-50"
+          [attr.title]="!open() ? 'Sair' : null"
+        >
+          <!-- ícone logout -->
+          <svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M10 17v-2h4V9h-4V7h6v10h-6Zm-2 2H4V5h4V3H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h4v-2Z"/>
+          </svg>
+          <span class="whitespace-nowrap transition-opacity"
+                [class.opacity-0]="!open()" [class.pointer-events-none]="!open()">
+            Sair
+          </span>
+        </button>
+      </div>
     </aside>
 
     <!-- Conteúdo -->
@@ -88,9 +109,23 @@ import { RouterOutlet, RouterLink, RouterLinkActive } from '@angular/router';
 export default class ShellComponent {
   open = signal<boolean>(localStorage.getItem('sx_sidebar_open') !== '0');
 
+  private router = inject(Router);
+  private token = inject(TokenStorageService);
+  private toast = inject(ToastrService);
+
   constructor() {
     effect(() => localStorage.setItem('sx_sidebar_open', this.open() ? '1' : '0'));
   }
 
   toggle() { this.open.set(!this.open()); }
+
+  logout() {
+    // Limpa autenticação
+    (this.token as any).clear?.();
+    this.token.setToken('');
+    this.token.setUser(null as any);
+
+    this.toast.info('Sessão encerrada.');
+    this.router.navigate(['/login']);
+  }
 }
