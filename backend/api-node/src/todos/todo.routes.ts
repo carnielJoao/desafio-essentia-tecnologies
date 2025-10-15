@@ -1,34 +1,28 @@
 import { Router, Request, Response } from 'express';
 import { PrismaClient } from '../generated/prisma';
+import { AuthRequest } from '../middleware/auth';
 
 const prisma = new PrismaClient();
 export const todoRouter = Router();
 
-// LOG
-function debugList(req: Request) {
-  console.log('[LIST TODOS]', {
-    rawPage: req.query.page,
-    rawPer: req.query.per_page,
-    rawSearch: req.query.search,
-    rawDone: req.query.done,
-  });
-}
+// Lista paginada e filtrável por search/done — SEMPRE do usuário logado
+todoRouter.get('/', async (req: AuthRequest, res: Response) => {
+  const userId = Number(req.user?.id);
+  if (!userId) return res.status(401).json({ message: 'Unauthenticated' });
 
-// GET /api/todos?search=&page=&per_page=&done=true|false
-todoRouter.get('/', async (req: Request, res: Response) => {
-  debugList(req);
-
-  const q = String(req.query.search ?? '').trim();
-  const page = Math.max(1, (Number(req.query.page ?? 1) || 1));
-  const per  = Math.max(1, Math.min(50, (Number(req.query.per_page ?? 12) || 12)));
-
+  const rawPage = String(req.query.page ?? '1');
+  const rawPer  = String(req.query.per_page ?? '12');
+  const q       = String(req.query.search ?? '').trim();
   const doneParam = String(req.query.done ?? '').toLowerCase();
+
+  const page = Math.max(1, parseInt(rawPage, 10) || 1);
+  const per  = Math.max(1, Math.min(50, parseInt(rawPer, 10) || 12));
+
   const doneFilter =
     doneParam === 'true' ? true :
-    doneParam === 'false' ? false :
-    undefined;
+    doneParam === 'false' ? false : undefined;
 
-  const where: any = {};
+  const where: any = { user_id: userId };
   if (q) where.OR = [{ title: { contains: q } }, { description: { contains: q } }];
   if (doneFilter !== undefined) where.done = doneFilter;
 
@@ -51,56 +45,67 @@ todoRouter.get('/', async (req: Request, res: Response) => {
   });
 });
 
-todoRouter.post('/__seed', async (_req: Request, res: Response) => {
-  await prisma.todos.createMany({
-    data: [
-      { title: 'Primeira tarefa', description: 'teste', done: false },
-      { title: 'Segunda tarefa', description: null,     done: true  },
-      { title: 'Mais uma',        description: 'ok',     done: false },
-    ],
-    skipDuplicates: true,
-  });
-  res.json({ ok: true });
-});
+// Criar — amarra ao usuário do token
+todoRouter.post('/', async (req: AuthRequest, res: Response) => {
+  const userId = Number(req.user?.id);
+  if (!userId) return res.status(401).json({ message: 'Unauthenticated' });
 
-// POST /api/todos
-todoRouter.post('/', async (req: Request, res: Response) => {
   const { title, description } = req.body ?? {};
   if (!title || typeof title !== 'string') {
     return res.status(422).json({ message: 'Título é obrigatório.' });
   }
+
   const t = await prisma.todos.create({
-    data: { title: title.trim(), description: description?.trim() || null },
+    data: {
+      title: title.trim(),
+      description: description?.trim() || null,
+      user_id: userId,
+    },
   });
+
   res.status(201).json(t);
 });
 
-// PUT /api/todos/:id
-todoRouter.put('/:id', async (req: Request, res: Response) => {
+// Atualizar — só do dono
+todoRouter.put('/:id', async (req: AuthRequest, res: Response) => {
+  const userId = Number(req.user?.id);
+  if (!userId) return res.status(401).json({ message: 'Unauthenticated' });
+
   const id = Number(req.params.id);
   const { title, description, done } = req.body ?? {};
-  try {
-    const t = await prisma.todos.update({
-      where: { id },
-      data: {
-        ...(title !== undefined ? { title: String(title) } : {}),
-        ...(description !== undefined ? { description: String(description) } : {}),
-        ...(done !== undefined ? { done: !!done } : {}),
-      },
-    });
-    res.json(t);
-  } catch {
-    res.status(404).json({ message: 'Tarefa não encontrada.' });
+
+  // garante ownership via where
+  const updated = await prisma.todos.updateMany({
+    where: { id, user_id: userId },
+    data: {
+      ...(title !== undefined ? { title: String(title) } : {}),
+      ...(description !== undefined ? { description: String(description) } : {}),
+      ...(done !== undefined ? { done: !!done } : {}),
+    },
+  });
+
+  if (updated.count === 0) {
+    return res.status(404).json({ message: 'Tarefa não encontrada.' });
   }
+
+  const t = await prisma.todos.findUnique({ where: { id } });
+  res.json(t);
 });
 
-// DELETE /api/todos/:id
-todoRouter.delete('/:id', async (req: Request, res: Response) => {
+// Excluir — só do dono
+todoRouter.delete('/:id', async (req: AuthRequest, res: Response) => {
+  const userId = Number(req.user?.id);
+  if (!userId) return res.status(401).json({ message: 'Unauthenticated' });
+
   const id = Number(req.params.id);
-  try {
-    await prisma.todos.delete({ where: { id } });
-    res.json({ deleted: true });
-  } catch {
-    res.status(404).json({ message: 'Tarefa não encontrada.' });
+
+  const deleted = await prisma.todos.deleteMany({
+    where: { id, user_id: userId },
+  });
+
+  if (deleted.count === 0) {
+    return res.status(404).json({ message: 'Tarefa não encontrada.' });
   }
+
+  res.json({ deleted: true });
 });
