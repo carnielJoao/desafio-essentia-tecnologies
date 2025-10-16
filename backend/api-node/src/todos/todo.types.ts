@@ -18,3 +18,14 @@ export type Todo = {
     per_page: number;
   };
   
+  export interface TodoAuditDoc {
+    event: string;
+    todo_id: number;
+    user_id: number;
+    actor_id: number;
+    at?: Date;
+    before?: any;
+    after?: any;
+    changed_fields?: string[];
+  }
+  
