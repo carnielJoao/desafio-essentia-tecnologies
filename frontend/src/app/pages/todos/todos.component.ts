@@ -1,108 +1,93 @@
-import { Component, effect, inject, signal } from '@angular/core';
+import { Component, inject, signal, effect } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { ReactiveFormsModule, FormBuilder } from '@angular/forms';
 import { FormsModule } from '@angular/forms';
-import { TodosService, Todo } from '../../services/todos.service';
+import { TodosService, Todo, Paginated } from '../../services/todos.service';
+import { ToastrService } from 'ngx-toastr';
+import { AuditService, TodoEvent } from '../../services/audit.service';
 
 @Component({
   selector: 'app-todos',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule, FormsModule],
+  imports: [CommonModule, FormsModule],
   template: `
   <div class="max-w-5xl mx-auto">
-    <h1 class="text-2xl font-semibold text-gray-800 mb-4">Tarefas</h1>
-
-    <div class="flex flex-wrap items-center gap-3 mb-4">
-      <input
-        [formControl]="searchCtrl"
-        type="text"
-        placeholder="Pesquisar..."
-        class="h-10 w-72 px-3 rounded-lg border border-gray-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-300" />
-
-      <!-- Interruptor pendentes/concluídos -->
-      <button
-        type="button"
-        (click)="toggleDone()"
-        class="h-10 px-3 rounded-lg border flex items-center gap-2"
-        [class.border-blue-600]="showDone()"
-        [class.text-blue-700]="showDone()"
-        [attr.aria-pressed]="showDone()">
-        <span class="inline-flex w-9 h-5 rounded-full items-center px-0.5"
-              [class.bg-blue-600]="showDone()" [class.bg-gray-300]="!showDone()">
-          <span class="inline-block w-4 h-4 bg-white rounded-full transform transition"
-                [class.translate-x-4]="showDone()"></span>
-        </span>
-        {{ showDone() ? 'Concluídos' : 'Pendentes' }}
-      </button>
-
-      <button
-        type="button"
-        (click)="openCreate()"
-        class="ml-auto h-10 px-4 rounded-lg bg-blue-600 text-white font-semibold">
+    <div class="flex items-center justify-between mb-5">
+      <h1 class="text-2xl font-semibold">Tarefas</h1>
+      <button class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700" (click)="openCreate()">
         Criar
       </button>
     </div>
 
-    <div class="grid gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-3">
-      <div *ngFor="let t of items()" class="rounded-xl border p-4 bg-white">
-        <div class="flex items-start justify-between">
-          <h3 class="font-semibold text-gray-900">{{ t.title }}</h3>
+    <!-- Barra de busca + toggle -->
+    <div class="flex items-center gap-3 mb-4">
+      <div class="relative flex-1">
+        <input class="w-full h-10 rounded-lg border px-3" type="text"
+               placeholder="Pesquisar..."
+               [(ngModel)]="searchText"
+               (ngModelChange)="debouncedSearch()"/>
+      </div>
 
-          <input
-            type="checkbox"
-            [checked]="t.done"
-            (change)="setDone(t, $any($event.target).checked)" />
+      <label class="inline-flex items-center gap-2 text-sm">
+        <input type="checkbox" [checked]="!showDone()" (change)="togglePending($event)" />
+        Pendentes
+      </label>
+    </div>
+
+    <!-- Lista em cards -->
+    <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+      <div *ngFor="let t of items()" class="border rounded-xl p-4 relative">
+        <div class="absolute right-3 top-3">
+          <input type="checkbox"
+                 [checked]="t.done"
+                 (change)="onToggleDone($event, t)"/>
         </div>
 
-        <p class="text-sm text-gray-600 mt-1" *ngIf="t.description">{{ t.description }}</p>
+        <div class="font-medium mb-1 break-words">{{ t.title }}</div>
+        <div class="text-sm text-gray-500 whitespace-pre-line break-words">{{ t.description || '' }}</div>
 
         <div class="flex gap-2 mt-3">
-          <button type="button" class="text-sm px-3 py-1 rounded border" (click)="edit(t)">Editar</button>
-          <button
-            type="button"
-            class="text-sm px-3 py-1 rounded border border-red-300 text-red-700"
-            (click)="askRemove(t)">
-            Excluir
-          </button>
+          <button class="px-3 py-1 rounded border" (click)="openEdit(t)">Editar</button>
+          <button class="px-3 py-1 rounded border text-red-600 border-red-300" (click)="confirmDelete(t)">Excluir</button>
+          <button class="px-3 py-1 rounded border" (click)="openAudit(t)">Histórico</button>
         </div>
       </div>
     </div>
 
+    <!-- Paginação -->
     <div class="flex items-center justify-between mt-6">
-      <div class="text-sm text-gray-600">
+      <div class="text-sm text-gray-500">
         Página {{ page() }} de {{ lastPage() }} — {{ total() }} itens
       </div>
       <div class="flex gap-2">
-        <button type="button" class="px-3 py-1 rounded border"
-                [disabled]="page()<=1" (click)="go(page()-1)">Anterior</button>
-        <button type="button" class="px-3 py-1 rounded border"
-                [disabled]="page()>=lastPage()" (click)="go(page()+1)">Próxima</button>
+        <button class="px-3 py-1 rounded border" [disabled]="page()<=1" (click)="go(page()-1)">Anterior</button>
+        <button class="px-3 py-1 rounded border" [disabled]="page()>=lastPage()" (click)="go(page()+1)">Próxima</button>
       </div>
     </div>
 
-    <!-- Modal criar/editar -->
-    <div *ngIf="modalOpen()" class="fixed inset-0 bg-black/40 grid place-items-center p-4">
-      <div class="bg-white rounded-2xl p-5 w-full max-w-md">
-        <h2 class="text-lg font-semibold mb-3">{{ editing() ? 'Editar tarefa' : 'Criar tarefa' }}</h2>
+    <!-- Modal Criar/Editar -->
+    <div *ngIf="modalOpen()" class="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
+      <div class="bg-white w-full max-w-md rounded-xl shadow-lg p-5">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="text-lg font-semibold">{{ editing() ? 'Editar tarefa' : 'Criar tarefa' }}</h2>
+          <button (click)="close()" class="p-2 rounded hover:bg-gray-100" aria-label="Fechar">✕</button>
+        </div>
 
         <form (ngSubmit)="save()" class="space-y-3">
-          <input
-            type="text"
-            class="w-full h-10 px-3 rounded border"
-            placeholder="Título"
-            [(ngModel)]="form.title"
-            name="title"
-            required />
+          <div>
+            <label class="text-sm font-medium">Título</label>
+            <input class="w-full h-10 rounded-lg border px-3"
+                   name="title" required [(ngModel)]="form.title"/>
+          </div>
+          <div>
+            <label class="text-sm font-medium">Descrição (opcional)</label>
+            <textarea class="w-full rounded-lg border px-3 py-2"
+                      rows="3" name="description"
+                      [(ngModel)]="form.description"></textarea>
+          </div>
 
-          <textarea
-            class="w-full min-h-24 px-3 py-2 rounded border"
-            placeholder="Descrição (opcional)"
-            [(ngModel)]="form.description"
-            name="description"></textarea>
-
-          <div class="flex items-center justify-end gap-2">
+          <div class="flex justify-end gap-2 pt-2">
             <button type="button" class="px-3 py-1 rounded border" (click)="close()">Cancelar</button>
-            <button type="submit" class="px-4 py-1.5 rounded bg-blue-600 text-white font-semibold">
+            <button type="submit" class="px-3 py-1 rounded bg-blue-600 text-white hover:bg-blue-700">
               {{ editing() ? 'Salvar' : 'Criar' }}
             </button>
           </div>
@@ -110,17 +95,98 @@ import { TodosService, Todo } from '../../services/todos.service';
       </div>
     </div>
 
-    <!-- Modal confirmar exclusão -->
-    <div *ngIf="confirmOpen()" class="fixed inset-0 bg-black/40 grid place-items-center p-4">
-      <div class="bg-white rounded-2xl p-5 w-full max-w-md" role="dialog" aria-modal="true">
-        <h3 class="text-lg font-semibold text-gray-900">Confirmar exclusão</h3>
-        <p class="text-gray-600 mt-2">
-          Tem certeza que deseja excluir
-          <span class="font-medium">"{{ confirmTarget()?.title }}"</span>?
-        </p>
-        <div class="flex items-center justify-end gap-2 mt-4">
-          <button type="button" class="px-3 py-1 rounded border" (click)="cancelRemove()">Cancelar</button>
-          <button type="button" class="px-3 py-1 rounded bg-red-600 text-white" (click)="confirmRemove()">Excluir</button>
+    <!-- Modal Confirmar Exclusão -->
+    <div *ngIf="confirmOpen()" class="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
+      <div class="bg-white w-full max-w-md rounded-xl shadow-lg p-5">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="text-lg font-semibold">Confirmar exclusão</h2>
+          <button (click)="closeConfirm()" class="p-2 rounded hover:bg-gray-100" aria-label="Fechar">✕</button>
+        </div>
+        <p class="text-sm">Tem certeza que deseja excluir a tarefa <b>{{ toDelete?.title }}</b>?</p>
+        <div class="flex justify-end gap-2 mt-4">
+          <button class="px-3 py-1 rounded border" (click)="closeConfirm()">Cancelar</button>
+          <button class="px-3 py-1 rounded bg-red-600 text-white hover:bg-red-700" (click)="doDelete()">Excluir</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal Histórico -->
+    <div *ngIf="auditOpen()" class="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
+      <div class="bg-white w-full max-w-xl rounded-xl shadow-lg p-5">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="text-lg font-semibold">Histórico — {{ auditFor?.title }}</h2>
+          <button (click)="closeAudit()" class="p-2 rounded hover:bg-gray-100" aria-label="Fechar">✕</button>
+        </div>
+
+        <div *ngIf="auditLoading()" class="text-sm text-gray-500">Carregando…</div>
+        <div *ngIf="!auditLoading() && auditItems().length===0" class="text-sm text-gray-500">
+          Sem eventos para esta tarefa.
+        </div>
+
+        <ul *ngIf="!auditLoading() && auditItems().length>0" class="space-y-3 max-h-80 overflow-y-auto">
+          <li *ngFor="let e of auditItems()" class="border rounded-lg p-3">
+            <div class="flex items-center justify-between mb-2">
+              <span class="text-sm font-medium px-2 py-1 rounded"
+                    [ngClass]="{
+                      'bg-green-100 text-green-800': e.type==='created',
+                      'bg-yellow-100 text-yellow-800': e.type==='updated',
+                      'bg-red-100 text-red-800': e.type==='deleted'
+                    }">
+                {{ getEventLabel(e.type) }}
+              </span>
+              <span class="text-xs text-gray-500">{{ e.at | date:'dd/MM/yyyy HH:mm' }}</span>
+            </div>
+            
+            <div class="text-sm space-y-2">
+              <!-- Mudanças no título -->
+              <div *ngIf="e.details?.changed_fields?.includes('title')" class="bg-blue-50 p-2 rounded">
+                <div class="font-medium text-blue-800">Título alterado:</div>
+                <div class="text-xs text-gray-600">
+                  <span class="line-through">{{ e.details.before?.title }}</span> 
+                  → 
+                  <span class="font-medium">{{ e.details.after?.title }}</span>
+                </div>
+              </div>
+              
+              <!-- Mudanças na descrição -->
+              <div *ngIf="e.details?.changed_fields?.includes('description')" class="bg-purple-50 p-2 rounded">
+                <div class="font-medium text-purple-800">Descrição alterada:</div>
+                <div class="text-xs text-gray-600">
+                  <div *ngIf="e.details.before?.description" class="line-through">{{ e.details.before.description }}</div>
+                  <div *ngIf="!e.details.before?.description" class="text-gray-400 italic">(vazio)</div>
+                  <div class="font-medium">{{ e.details.after?.description || '(vazio)' }}</div>
+                </div>
+              </div>
+              
+              <!-- Mudanças no status -->
+              <div *ngIf="e.details?.changed_fields?.includes('done')" class="bg-orange-50 p-2 rounded">
+                <div class="font-medium text-orange-800">Status alterado:</div>
+                <div class="text-xs text-gray-600">
+                  <span [ngClass]="e.details.before?.done ? 'text-green-600' : 'text-gray-500'">
+                    {{ e.details.before?.done ? 'Concluída' : 'Pendente' }}
+                  </span>
+                  → 
+                  <span [ngClass]="e.details.after?.done ? 'text-green-600' : 'text-gray-500'">
+                    {{ e.details.after?.done ? 'Concluída' : 'Pendente' }}
+                  </span>
+                </div>
+              </div>
+              
+              <!-- Criação de tarefa -->
+              <div *ngIf="e.type === 'created'" class="bg-green-50 p-2 rounded">
+                <div class="font-medium text-green-800">Tarefa criada:</div>
+                <div class="text-xs text-gray-600">
+                  <div><strong>Título:</strong> {{ e.details.after?.title }}</div>
+                  <div *ngIf="e.details.after?.description"><strong>Descrição:</strong> {{ e.details.after.description }}</div>
+                  <div><strong>Status:</strong> {{ e.details.after?.done ? 'Concluída' : 'Pendente' }}</div>
+                </div>
+              </div>
+            </div>
+          </li>
+        </ul>
+
+        <div class="mt-4 text-right">
+          <button (click)="closeAudit()" class="px-3 py-1 rounded border">Fechar</button>
         </div>
       </div>
     </div>
@@ -129,84 +195,81 @@ import { TodosService, Todo } from '../../services/todos.service';
 })
 export default class TodosComponent {
   private api = inject(TodosService);
-  private fb = inject(FormBuilder);
+  private toast = inject(ToastrService);
+  private audit = inject(AuditService);
 
-  items = signal<Todo[]>([]);
   page = signal(1);
-  per = signal(12);
+  perPage = signal(12);
   lastPage = signal(1);
   total = signal(0);
-
-  searchCtrl = this.fb.control<string>('');
+  searchText = '';
   showDone = signal(false);
 
+  items = signal<Todo[]>([]);
   modalOpen = signal(false);
-  editing = signal<Todo | null>(null);
-  form: { title: string; description?: string | null } = { title: '', description: '' };
+  editing = signal(false);
+  form: Partial<Todo> = { title: '', description: '' };
+  editingId: number | string | null = null;
 
   confirmOpen = signal(false);
-  confirmTarget = signal<Todo | null>(null);
+  toDelete: Todo | null = null;
+
+  auditOpen = signal(false);
+  auditLoading = signal(false);
+  auditItems = signal<TodoEvent[]>([]);
+  auditFor: { id: number | string; title: string } | null = null;
 
   constructor() {
-    let timer: any;
-    this.searchCtrl.valueChanges.subscribe(() => {
-      clearTimeout(timer);
-      timer = setTimeout(() => { this.page.set(1); this.load(); }, 300);
-    });
-
-    this.load();
-
-    effect(() => {
-      const done = this.showDone();
-      this.page.set(1);
-      this.fetch(1, this.per(), this.searchCtrl.value ?? '', done);
-    });
+    effect(() => void this.load());
   }
 
-  toggleDone() { this.showDone.set(!this.showDone()); }
-
-  private fetch(page: number, per: number, search: string, done: boolean) {
-    this.api.list({ page, per_page: per, search, done }).subscribe({
-      next: (res) => {
-        this.items.set(res.data);
-        this.lastPage.set(res.last_page);
-        this.total.set(res.total);
-      },
-      error: (err) => console.error('Erro ao carregar (fetch)', err),
-    });
-  }
-
-  load() {
+  async load() {
     this.api.list({
       page: this.page(),
-      per_page: this.per(),
-      search: this.searchCtrl.value ?? '',
+      per_page: this.perPage(),
+      search: this.searchText?.trim() || undefined,
       done: this.showDone(),
     }).subscribe({
-      next: (res) => {
-        this.items.set(res.data);
-        this.page.set(res.current_page);
-        this.lastPage.set(res.last_page);
-        this.total.set(res.total);
+      next: (res: Paginated<Todo>) => {
+        this.items.set(res.data || []);
+        this.page.set(res.current_page || 1);
+        this.lastPage.set(res.last_page || 1);
+        this.total.set(res.total || 0);
       },
-      error: (err) => console.error('Erro ao carregar (load)', err),
+      error: () => this.toast.error('Falha ao carregar tarefas.'),
     });
   }
 
   go(p: number) {
-    const next = Math.max(1, Math.min(p, this.lastPage()));
-    this.page.set(next);
-    this.load();
+    if (p < 1 || p > this.lastPage()) return;
+    this.page.set(p);
+  }
+
+  debouncedSearch: () => void = (() => {
+    let t: any;
+    return () => {
+      clearTimeout(t);
+      t = setTimeout(() => { this.page.set(1); this.load(); }, 350);
+    };
+  })();
+
+  togglePending(ev: Event) {
+    const checked = (ev.target as HTMLInputElement).checked;
+    this.showDone.set(!checked);
+    this.page.set(1);
+    void this.load();
   }
 
   openCreate() {
-    this.editing.set(null);
+    this.editing.set(false);
+    this.editingId = null;
     this.form = { title: '', description: '' };
     this.modalOpen.set(true);
   }
 
-  edit(t: Todo) {
-    this.editing.set(t);
+  openEdit(t: Todo) {
+    this.editing.set(true);
+    this.editingId = t.id;
     this.form = { title: t.title, description: t.description ?? '' };
     this.modalOpen.set(true);
   }
@@ -214,52 +277,67 @@ export default class TodosComponent {
   close() { this.modalOpen.set(false); }
 
   save() {
-    const editing = this.editing();
-    if (editing) {
-      this.api.update(editing.id, {
-        title: this.form.title,
-        description: this.form.description ?? null
-      }).subscribe({
-        next: () => { this.modalOpen.set(false); this.load(); }
+    const payload = { title: (this.form.title || '').trim(), description: (this.form.description || '').trim() || null };
+    if (!payload.title) { this.toast.warning('Título é obrigatório.'); return; }
+
+    if (this.editing() && this.editingId != null) {
+      this.api.update(this.editingId, payload).subscribe({
+        next: () => { this.toast.success('Tarefa atualizada.'); this.modalOpen.set(false); this.load(); },
+        error: () => this.toast.error('Falha ao atualizar.'),
       });
     } else {
-      this.api.create({
-        title: this.form.title,
-        description: this.form.description ?? null
-      }).subscribe({
-        next: () => { this.modalOpen.set(false); this.load(); }
+      this.api.create(payload).subscribe({
+        next: () => { this.toast.success('Tarefa criada.'); this.modalOpen.set(false); this.page.set(1); this.load(); },
+        error: () => this.toast.error('Falha ao criar.'),
       });
     }
   }
 
-  setDone(t: Todo, checked: boolean) {
-    this.api.update(t.id, { done: !!checked }).subscribe({ next: () => this.load() });
-  }
-
-  askRemove(t: Todo) {
-    this.confirmTarget.set(t);
-    this.confirmOpen.set(true);
-  }
-
-  cancelRemove() {
-    this.confirmOpen.set(false);
-    this.confirmTarget.set(null);
-  }
-
-  confirmRemove() {
-    const t = this.confirmTarget();
-    if (!t) return;
-    this.api.remove(t.id).subscribe({
-      next: () => {
-        this.confirmOpen.set(false);
-        this.confirmTarget.set(null);
-        this.load();
-      },
-      error: (err) => {
-        console.error('Erro ao excluir', err);
-        this.confirmOpen.set(false);
-        this.confirmTarget.set(null);
-      }
+  onToggleDone(event: Event, t: Todo) {
+    const checked = (event.target as HTMLInputElement).checked;
+    this.api.update(t.id, { done: checked }).subscribe({
+      next: () => { this.toast.info(checked ? 'Concluída.' : 'Marcada como pendente.'); this.load(); },
+      error: () => this.toast.error('Falha ao alterar status.'),
     });
+  }
+
+  confirmDelete(t: Todo) { this.toDelete = t; this.confirmOpen.set(true); }
+  closeConfirm() { this.confirmOpen.set(false); this.toDelete = null; }
+
+  doDelete() {
+    if (!this.toDelete) return;
+    this.api.remove(this.toDelete.id).subscribe({
+      next: () => { this.toast.success('Excluída.'); this.closeConfirm(); this.load(); },
+      error: () => this.toast.error('Falha ao excluir.'),
+    });
+  }
+
+  openAudit(t: Todo) {
+    this.auditFor = { id: t.id, title: t.title };
+    this.auditOpen.set(true);
+    this.auditLoading.set(true);
+    this.audit.list(t.id).subscribe({
+      next: evts => { this.auditItems.set(evts); this.auditLoading.set(false); },
+      error: () => { this.auditItems.set([]); this.auditLoading.set(false); this.toast.error('Falha ao carregar histórico.'); }
+    });
+  }
+
+  closeAudit() {
+    this.auditOpen.set(false);
+    this.auditItems.set([]);
+    this.auditFor = null;
+  }
+
+  getEventLabel(type: string): string {
+    switch (type) {
+      case 'created':
+        return 'Criada';
+      case 'updated':
+        return 'Atualizada';
+      case 'deleted':
+        return 'Excluída';
+      default:
+        return type;
+    }
   }
 }
