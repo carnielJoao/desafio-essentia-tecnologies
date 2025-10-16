@@ -1,111 +1,89 @@
-import { Router, Request, Response } from 'express';
-import { PrismaClient } from '../generated/prisma';
+// src/todos/todo.routes.ts
+import { Router, Response, NextFunction } from 'express';
+import { PrismaClient } from '@prisma/client';
 import { AuthRequest } from '../middleware/auth';
 
-const prisma = new PrismaClient();
+const prisma = new PrismaClient({ log: ['query', 'info', 'warn', 'error'] });
 export const todoRouter = Router();
 
-// Lista paginada e filtrável por search/done — SEMPRE do usuário logado
-todoRouter.get('/', async (req: AuthRequest, res: Response) => {
-  const userId = Number(req.user?.id);
-  if (!userId) return res.status(401).json({ message: 'Unauthenticated' });
+todoRouter.get('/', async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const userId = Number((req.user as any)?.id);
+    if (!userId || Number.isNaN(userId)) return res.status(401).json({ message: 'Usuário inválido no token.' });
 
-  const rawPage = String(req.query.page ?? '1');
-  const rawPer  = String(req.query.per_page ?? '12');
-  const q       = String(req.query.search ?? '').trim();
-  const doneParam = String(req.query.done ?? '').toLowerCase();
+    const q = String(req.query.search ?? '').trim();
+    const page = Math.max(1, parseInt(String(req.query.page ?? 1), 10));
+    const per  = Math.max(1, Math.min(50, parseInt(String(req.query.per_page ?? 12), 10)));
+    const doneParam = String(req.query.done ?? '').toLowerCase();
+    const doneFilter = doneParam === 'true' ? true : doneParam === 'false' ? false : undefined;
 
-  const page = Math.max(1, parseInt(rawPage, 10) || 1);
-  const per  = Math.max(1, Math.min(50, parseInt(rawPer, 10) || 12));
+    const where: any = { user_id: userId };
+    if (q) where.OR = [{ title: { contains: q } }, { description: { contains: q } }];
+    if (doneFilter !== undefined) where.done = doneFilter;
 
-  const doneFilter =
-    doneParam === 'true' ? true :
-    doneParam === 'false' ? false : undefined;
+    const [total, data] = await Promise.all([
+      prisma.todos.count({ where }),
+      prisma.todos.findMany({
+        where,
+        orderBy: { created_at: 'desc' },
+        skip: (page - 1) * per,
+        take: per,
+      }),
+    ]);
 
-  const where: any = { user_id: userId };
-  if (q) where.OR = [{ title: { contains: q } }, { description: { contains: q } }];
-  if (doneFilter !== undefined) where.done = doneFilter;
-
-  const [total, data] = await Promise.all([
-    prisma.todos.count({ where }),
-    prisma.todos.findMany({
-      where,
-      orderBy: { created_at: 'desc' },
-      skip: (page - 1) * per,
-      take: per,
-    }),
-  ]);
-
-  res.json({
-    data,
-    current_page: page,
-    last_page: Math.max(1, Math.ceil(total / per)),
-    total,
-    per_page: per,
-  });
+    res.json({ data, current_page: page, last_page: Math.max(1, Math.ceil(total / per)), total, per_page: per });
+  } catch (err) { next(err); }
 });
 
-// Criar — amarra ao usuário do token
-todoRouter.post('/', async (req: AuthRequest, res: Response) => {
-  const userId = Number(req.user?.id);
-  if (!userId) return res.status(401).json({ message: 'Unauthenticated' });
+todoRouter.post('/', async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const userId = Number((req.user as any)?.id);
+    if (!userId || Number.isNaN(userId)) return res.status(401).json({ message: 'Usuário inválido no token.' });
 
-  const { title, description } = req.body ?? {};
-  if (!title || typeof title !== 'string') {
-    return res.status(422).json({ message: 'Título é obrigatório.' });
-  }
+    const { title, description } = req.body ?? {};
+    if (!title || typeof title !== 'string') return res.status(422).json({ message: 'Título é obrigatório.' });
 
-  const t = await prisma.todos.create({
-    data: {
-      title: title.trim(),
-      description: description?.trim() || null,
-      user_id: userId,
-    },
-  });
-
-  res.status(201).json(t);
+    const t = await prisma.todos.create({
+      data: { user_id: userId, title: title.trim(), description: description?.trim() || null },
+    });
+    res.status(201).json(t);
+  } catch (err) { next(err); }
 });
 
-// Atualizar — só do dono
-todoRouter.put('/:id', async (req: AuthRequest, res: Response) => {
-  const userId = Number(req.user?.id);
-  if (!userId) return res.status(401).json({ message: 'Unauthenticated' });
+todoRouter.put('/:id', async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const userId = Number((req.user as any)?.id);
+    if (!userId || Number.isNaN(userId)) return res.status(401).json({ message: 'Usuário inválido no token.' });
 
-  const id = Number(req.params.id);
-  const { title, description, done } = req.body ?? {};
+    const id = Number(req.params.id);
+    const { title, description, done } = req.body ?? {};
 
-  // garante ownership via where
-  const updated = await prisma.todos.updateMany({
-    where: { id, user_id: userId },
-    data: {
-      ...(title !== undefined ? { title: String(title) } : {}),
-      ...(description !== undefined ? { description: String(description) } : {}),
-      ...(done !== undefined ? { done: !!done } : {}),
-    },
-  });
+    const exists = await prisma.todos.findFirst({ where: { id, user_id: userId } });
+    if (!exists) return res.status(404).json({ message: 'Tarefa não encontrada.' });
 
-  if (updated.count === 0) {
-    return res.status(404).json({ message: 'Tarefa não encontrada.' });
-  }
-
-  const t = await prisma.todos.findUnique({ where: { id } });
-  res.json(t);
+    const t = await prisma.todos.update({
+      where: { id },
+      data: {
+        ...(title !== undefined ? { title: String(title) } : {}),
+        ...(description !== undefined ? { description: String(description) } : {}),
+        ...(done !== undefined ? { done: !!done } : {}),
+        updated_at: new Date(),
+      },
+    });
+    res.json(t);
+  } catch (err) { next(err); }
 });
 
-// Excluir — só do dono
-todoRouter.delete('/:id', async (req: AuthRequest, res: Response) => {
-  const userId = Number(req.user?.id);
-  if (!userId) return res.status(401).json({ message: 'Unauthenticated' });
+todoRouter.delete('/:id', async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const userId = Number((req.user as any)?.id);
+    if (!userId || Number.isNaN(userId)) return res.status(401).json({ message: 'Usuário inválido no token.' });
 
-  const id = Number(req.params.id);
+    const id = Number(req.params.id);
+    const exists = await prisma.todos.findFirst({ where: { id, user_id: userId } });
+    if (!exists) return res.status(404).json({ message: 'Tarefa não encontrada.' });
 
-  const deleted = await prisma.todos.deleteMany({
-    where: { id, user_id: userId },
-  });
-
-  if (deleted.count === 0) {
-    return res.status(404).json({ message: 'Tarefa não encontrada.' });
-  }
-
-  res.json({ deleted: true });
+    await prisma.todos.delete({ where: { id } });
+    res.json({ deleted: true });
+  } catch (err) { next(err); }
 });
