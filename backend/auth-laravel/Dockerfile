@@ -22,7 +22,11 @@ COPY --from=vendor /app /var/www/html
 # Permissões básicas
 RUN chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache
 
+# Tornar script executável
+RUN chmod +x /var/www/html/init.sh
+
 # Expor PHP-FPM
 EXPOSE 9000
 
-CMD ["php-fpm"]
+# Script de inicialização que executa em background
+CMD ["/bin/bash", "-c", "/var/www/html/init.sh & php-fpm"]
