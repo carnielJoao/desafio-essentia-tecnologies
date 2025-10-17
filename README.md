@@ -30,11 +30,11 @@ Sistema completo de gerenciamento de tarefas com autenticação, auditoria e int
 
 ## Como Executar
 
-### 1. Clone o repositório
-```bash
-git clone <url-do-repositorio>
-cd desafio-essentia-tecnologies
-```
+### 1. Baixe o projeto
+- Acesse o repositório no GitHub
+- Clique em **"Code"** → **"Download ZIP"**
+- Extraia o arquivo ZIP
+- Abra o terminal na pasta extraída
 
 ### 2. Execute o projeto
 ```bash
@@ -45,10 +45,25 @@ docker-compose up -d
 docker-compose ps
 ```
 
-### 3. Aguarde a inicialização
+### 3. Configure o banco de dados (OBRIGATÓRIO)
+**⚠️ IMPORTANTE:** Após executar `docker-compose up -d`, aguarde 30 segundos e execute:
+
 ```bash
-# Monitore os logs (opcional)
-docker-compose logs -f
+# Execute as migrações (criar tabelas)
+docker exec auth-laravel php artisan migrate --force
+
+# Execute os seeders (criar usuário demo)
+docker exec auth-laravel php artisan db:seed --force
+```
+
+### 4. Verifique se tudo está funcionando
+```bash
+# Verifique os containers
+docker-compose ps
+
+# Teste o login
+# Acesse: http://localhost:8080
+# Login: demo@demo.com / 123456
 ```
 
 ## Acessos
@@ -93,6 +108,23 @@ Senha: 123456
 
 ## Comandos Úteis
 
+### 🚀 Comandos Rápidos
+```bash
+# Iniciar tudo
+docker-compose up -d
+
+# Configurar banco (sempre execute após iniciar)
+docker exec auth-laravel php artisan migrate --force
+docker exec auth-laravel php artisan db:seed --force
+
+# Parar tudo
+docker-compose down
+
+# Reiniciar tudo
+docker-compose down && docker-compose up -d
+# Depois execute novamente os comandos de banco
+```
+
 ### Gerenciamento de Containers
 ```bash
 # Parar todos os serviços
@@ -128,17 +160,32 @@ docker-compose up -d
 
 ## Solução de Problemas
 
-### Erro 403 no Frontend
+### ❌ Erro: "Table 'users' doesn't exist"
+**Solução:** Execute os comandos de configuração do banco:
+```bash
+docker exec auth-laravel php artisan migrate --force
+docker exec auth-laravel php artisan db:seed --force
+```
+
+### ❌ Erro: "Connection refused"
+**Solução:** Aguarde o MySQL inicializar e execute:
+```bash
+# Aguarde 30 segundos após docker-compose up -d
+docker exec auth-laravel php artisan migrate --force
+docker exec auth-laravel php artisan db:seed --force
+```
+
+### ❌ Erro 403 no Frontend
 ```bash
 docker-compose restart frontend
 ```
 
-### Erro 401 na API
+### ❌ Erro 401 na API
 - Verifique se está logado
 - Limpe o localStorage do navegador
 - Faça login novamente
 
-### Containers não iniciam
+### ❌ Containers não iniciam
 ```bash
 # Verifique se as portas estão livres
 netstat -an | findstr :8080
@@ -149,11 +196,14 @@ netstat -an | findstr :3001
 docker system prune -f
 ```
 
-### Problemas de Banco
+### ❌ Problemas de Banco
 ```bash
 # Reset completo dos bancos
 docker-compose down -v
 docker-compose up -d
+# Depois execute novamente:
+docker exec auth-laravel php artisan migrate --force
+docker exec auth-laravel php artisan db:seed --force
 ```
 
 ## Estrutura do Projeto
